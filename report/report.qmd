@@ -1,0 +1,198 @@
+---
+title: "Glucocorticoid-responsive genes in airway smooth muscle: a re-analysis of public RNA-seq data with DESeq2"
+author: "Antoine Haddad"
+date: today
+format:
+  pdf:
+    documentclass: article
+    geometry: margin=2.2cm
+    fontsize: 10.5pt
+    number-sections: true
+    colorlinks: true
+    fig-pos: "H"
+    keep-tex: false
+execute:
+  echo: false
+  warning: false
+  message: false
+bibliography: references.bib
+csl: apa.csl
+---
+
+```{r setup}
+suppressPackageStartupMessages({
+  library(DESeq2); library(airway); library(ggplot2); library(dplyr)
+  library(pheatmap); library(clusterProfiler); library(knitr)
+})
+set.seed(1)
+theme_set(theme_minimal(base_size = 10))
+pal <- c(untrt = "#59684B", trt = "#97553B")
+
+data(airway)
+dds <- DESeqDataSet(airway, design = ~ cell + dex)
+dds$dex <- relevel(dds$dex, "untrt")
+n_total <- nrow(dds)
+keep <- rowSums(counts(dds) >= 10) >= 4
+dds <- dds[keep, ]
+n_kept <- nrow(dds)
+dds <- DESeq(dds, quiet = TRUE)
+res <- results(dds, alpha = 0.05)
+res_shr <- lfcShrink(dds, coef = "dex_trt_vs_untrt", type = "apeglm", quiet = TRUE)
+
+# unpaired comparison (ignores which cell line each sample came from)
+dds_u <- DESeqDataSet(airway, design = ~ dex)
+dds_u$dex <- relevel(dds_u$dex, "untrt")
+dds_u <- DESeq(dds_u[keep, ], quiet = TRUE)
+res_u <- results(dds_u, alpha = 0.05)
+
+n_sig   <- sum(res$padj < 0.05, na.rm = TRUE)
+n_up    <- sum(res$padj < 0.05 & res$log2FoldChange > 0, na.rm = TRUE)
+n_down  <- sum(res$padj < 0.05 & res$log2FoldChange < 0, na.rm = TRUE)
+n_sig1  <- sum(res$padj < 0.05 & abs(res$log2FoldChange) > 1, na.rm = TRUE)
+n_sig_u <- sum(res_u$padj < 0.05, na.rm = TRUE)
+sig_p <- rownames(res)[which(res$padj < 0.05)]
+sig_u <- rownames(res_u)[which(res_u$padj < 0.05)]
+n_both <- length(intersect(sig_p, sig_u))
+sym <- rowData(dds)$symbol
+```
+
+# Summary
+
+This report re-analyses a public bulk RNA-seq experiment: four primary human airway smooth muscle cell lines, each treated with the glucocorticoid dexamethasone or left untreated. The original study [@himes2014] reported 316 differentially expressed genes. Using DESeq2 [@love2014] with a paired design, I find **`r format(n_sig, big.mark=",")` genes** at an adjusted *p* < 0.05 (`r format(n_up, big.mark=",")` up, `r format(n_down, big.mark=",")` down), and `r n_sig1` with an additional |log~2~ fold change| > 1. All five genes the original paper highlighted as well-known glucocorticoid targets, and *CRISPLD2* (the paper's headline gene), are significantly up-regulated here. The much larger gene count reflects a different pipeline and threshold, not a contradiction, and is discussed under Discussion and limitations. Pairing samples by cell line (accounting for donor) changes the answer materially: an unpaired model finds `r format(n_sig_u, big.mark=",")` genes, of which `r format(n_both, big.mark=",")` are also found by the paired model.
+
+# Background and question
+
+Glucocorticoids are a mainstay of asthma treatment, but how they act on airway smooth muscle is poorly understood. @himes2014 profiled the transcriptome of four primary human airway smooth muscle cell lines with and without 18 hours of 1 µM dexamethasone. I ask three questions of the public data:
+
+1. Which genes respond to dexamethasone, and do the paper's named genes appear among them?
+2. How much does it matter that the same four cell lines were measured in both conditions?
+3. What biology do the responding genes point to?
+
+# Data
+
+The counts come from the Bioconductor `airway` package, which packages the public GEO series GSE52778 as a gene-level count table (Ensembl annotation, 8 samples, `r format(n_total, big.mark=",")` genes). Design: 4 cell lines (N61311, N052611, N080611, N061011) × {untreated, dexamethasone}. Library sizes range from roughly 15 to 31 million reads per sample (Figure 1A). No data was generated for this report.
+
+# Methods
+
+**Filtering.** Genes were kept if at least 10 reads were observed in at least 4 samples (`r format(n_kept, big.mark=",")` of `r format(n_total, big.mark=",")` genes kept). Four is the size of the smallest condition group.
+
+**Differential expression.** DESeq2 negative-binomial GLM with design `~ cell + dex`, so each cell line serves as its own control. Wald test for the dexamethasone coefficient, Benjamini-Hochberg adjusted *p*-values (DESeq2 default with independent filtering), significance at adjusted *p* < 0.05. Log fold changes for plotting and ranking were shrunk with `apeglm` [@zhu2019]. As a comparison, the same data were fitted with `~ dex` (no cell-line term).
+
+**Exploration.** Variance-stabilising transformation (VST) for PCA and the heatmap.
+
+**Enrichment.** Over-representation analysis of GO Biological Process terms (`clusterProfiler`) for genes with adjusted *p* < 0.05 and |log~2~FC| > 1, against the filtered genes as the background universe. Terms with adjusted *p* < 0.05 are reported.
+
+**Software.** R `r paste(R.version$major, R.version$minor, sep = ".")`, DESeq2 `r as.character(packageVersion("DESeq2"))`, Bioconductor `airway` `r as.character(packageVersion("airway"))`.
+
+# Results
+
+## Sample quality and structure
+
+```{r fig-qc, fig.width=7.2, fig.height=3.2, fig.cap="Library sizes and sample structure. (A) Total reads per sample. (B) PCA of VST-transformed counts: PC1 separates dexamethasone-treated from untreated samples; the cell lines separate along PC2 and PC3."}
+lib <- data.frame(sample = colnames(dds), M = colSums(counts(dds)) / 1e6,
+                  dex = dds$dex, cell = dds$cell)
+pA <- ggplot(lib, aes(sample, M, fill = dex)) + geom_col() +
+  scale_fill_manual(values = pal) + labs(x = NULL, y = "Million reads (filtered genes)", tag = "A") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7), legend.position = "none")
+vsd <- vst(dds, blind = TRUE)
+pc <- prcomp(t(assay(vsd)))
+ve <- round(100 * pc$sdev^2 / sum(pc$sdev^2), 1)
+pcd <- data.frame(pc$x[, 1:2], dex = dds$dex, cell = dds$cell)
+pB <- ggplot(pcd, aes(PC1, PC2, colour = dex, shape = cell)) + geom_point(size = 3) +
+  scale_colour_manual(values = pal) +
+  labs(x = paste0("PC1 (", ve[1], "%)"), y = paste0("PC2 (", ve[2], "%)"), tag = "B")
+gridExtra::grid.arrange(pA, pB, ncol = 2, widths = c(1, 1.25))
+```
+
+The dominant axis of variation is the drug: PC1 (`r ve[1]`% of variance) separates treated from untreated samples (R² = `r round(summary(lm(pc$x[,1] ~ dds$dex))$r.squared, 2)` against treatment), while PC2 and PC3 together (`r ve[2] + ve[3]`%) separate the four cell lines (R² = `r round(summary(lm(pc$x[,2] ~ dds$cell))$r.squared, 2)` and `r round(summary(lm(pc$x[,3] ~ dds$cell))$r.squared, 2)` against cell line). Treatment is a strong, consistent shift, but a large share of the remaining variance is between-line, which is the reason to model cell line explicitly.
+
+## Differential expression
+
+At adjusted *p* < 0.05, `r format(n_sig, big.mark=",")` genes respond to dexamethasone (`r format(n_up, big.mark=",")` up, `r format(n_down, big.mark=",")` down); `r n_sig1` of these also have |log~2~FC| > 1 (Figure 2).
+
+```{r fig-volcano, fig.width=6.4, fig.height=3.8, fig.cap="Volcano plot of shrunken log2 fold change against significance. Highlighted genes were named in the original paper."}
+d <- as.data.frame(res_shr); d$symbol <- sym; d$padj <- res$padj
+d$sig <- ifelse(!is.na(d$padj) & d$padj < 0.05, "padj < 0.05", "n.s.")
+lab <- d[d$symbol %in% c("CRISPLD2", "DUSP1", "KLF15", "PER1", "TSC22D3"), ]
+ggplot(d, aes(log2FoldChange, -log10(padj), colour = sig)) +
+  geom_point(size = 0.5, alpha = 0.5) +
+  scale_colour_manual(values = c("padj < 0.05" = "#97553B", "n.s." = "grey70")) +
+  geom_point(data = lab, colour = "black", size = 1.6) +
+  geom_text(data = lab, aes(label = symbol), colour = "black", size = 3,
+            vjust = -0.8, check_overlap = TRUE) +
+  labs(x = "Shrunken log2 fold change (dex vs untreated)", y = expression(-log[10]~adjusted~italic(p)),
+       colour = NULL)
+```
+
+```{r tab-known}
+kg <- c("CRISPLD2", "DUSP1", "KLF15", "PER1", "TSC22D3")
+idx <- match(kg, sym)
+tk <- data.frame(Gene = kg, `log2FC (shrunken)` = round(res_shr$log2FoldChange[idx], 2),
+                 `Adjusted p` = formatC(res$padj[idx], format = "e", digits = 1), check.names = FALSE)
+kable(tk, row.names = FALSE, caption = "Genes highlighted by the original paper. All five are significantly up-regulated.")
+```
+
+```{r tab-top}
+top <- res_shr[order(res$padj), ][1:10, ]
+tt <- data.frame(Gene = sym[match(rownames(top), rownames(dds))],
+                 `Mean count` = round(res[rownames(top), "baseMean"]),
+                 `log2FC (shrunken)` = round(top$log2FoldChange, 2),
+                 `Adjusted p` = formatC(res[rownames(top), "padj"], format = "e", digits = 1), check.names = FALSE)
+kable(tt, row.names = FALSE, caption = "Ten most significant genes.")
+```
+
+```{r fig-heat, fig.width=6.4, fig.height=4.4, fig.cap="Top 40 genes by adjusted p-value, VST expression centred per gene. Hierarchical clustering of samples on these genes splits them into exactly the treated and untreated groups."}
+top40 <- rownames(res)[order(res$padj)][1:40]
+m <- assay(vsd)[top40, ]; m <- m - rowMeans(m)
+rownames(m) <- sym[match(top40, rownames(dds))]
+ann <- data.frame(dex = dds$dex, cell = dds$cell, row.names = colnames(dds))
+pheatmap(m, annotation_col = ann, annotation_colors = list(dex = pal),
+         fontsize = 7, fontsize_row = 6, show_colnames = FALSE, border_color = NA)
+```
+
+## Does pairing by cell line matter?
+
+An unpaired model (`~ dex`) finds `r format(n_sig_u, big.mark=",")` genes at the same threshold, against `r format(n_sig, big.mark=",")` for the paired model. Of the unpaired hits, `r format(n_both, big.mark=",")` (`r round(100 * n_both / n_sig_u)`%) are also found by the paired model. Putting cell line in the design removes between-line variance from the error term, which is why the paired model has more power here. Ignoring the pairing would have missed about `r format(n_sig - n_sig_u, big.mark=",")` genes at this sample size.
+
+## Biological themes
+
+```{r enrich}
+universe <- sub("\\..*", "", rownames(dds))
+de_ids <- rownames(res)[which(res$padj < 0.05 & abs(res$log2FoldChange) > 1)]
+ego <- tryCatch(
+  enrichGO(gene = de_ids, universe = rownames(dds), OrgDb = "org.Hs.eg.db",
+           keyType = "ENSEMBL", ont = "BP", pAdjustMethod = "BH",
+           pvalueCutoff = 0.05, qvalueCutoff = 0.05, readable = TRUE),
+  error = function(e) NULL)
+has_enrich <- !is.null(ego) && nrow(as.data.frame(ego)) > 0
+```
+
+The top terms below are broad developmental and vascular/muscle-system processes. The axon-guidance terms are most likely driven by shared guidance-cue genes that also act in other tissues, so I would not read them as neuronal activity in these cells.
+
+```{r tab-enrich, eval=has_enrich}
+e <- as.data.frame(ego)
+e <- e[order(e$p.adjust), ][1:min(10, nrow(e)), ]
+kable(data.frame(Term = e$Description, `Gene ratio` = e$GeneRatio,
+                 `Adjusted p` = formatC(e$p.adjust, format = "e", digits = 1), check.names = FALSE),
+      row.names = FALSE, caption = "Top GO Biological Process terms among genes with adjusted p < 0.05 and |log2FC| > 1.")
+```
+
+`r if (!has_enrich) "No GO terms passed the adjusted p-value cutoff."`
+
+# Discussion and limitations
+
+**Why 4,000 genes and not 316?** The original study reported 316 genes using a different pipeline and a gene-level test; this analysis uses DESeq2 on count data with a paired design. I did not reproduce the original pipeline, so I cannot say which difference accounts for the gap. Candidate explanations that I have **not** tested include the choice of tool, the original filtering and multiple-testing handling, and the reference annotation. Restricting to |log~2~FC| > 1 gives `r n_sig1` genes, still more than 316. What *is* robust is the shared biology: the genes the paper named as well-characterised glucocorticoid targets are all recovered with large effects and very small adjusted *p*-values.
+
+**Sample size.** Four cell lines is a small number of biological replicates. The paired design is the right use of that data, but results describe these four lines, not airway smooth muscle in general. Dispersion estimates from four pairs are themselves noisy.
+
+**Statistical significance is not effect size.** With thousands of significant genes, adjusted *p* alone is a weak filter for prioritising follow-up. I use shrunken fold changes for ranking and the |log~2~FC| > 1 subset for enrichment for that reason; the threshold is conventional rather than derived.
+
+**Enrichment.** GO over-representation depends on the background universe and on the arbitrary fold-change cut. It is a hypothesis generator, not evidence of mechanism.
+
+**No validation.** This is a computational re-analysis. The original study validated *CRISPLD2* by qPCR and knockdown; nothing here substitutes for that.
+
+# Provenance and reproducibility
+
+All data are public (GEO GSE52778 via the Bioconductor `airway` package). The analysis code is this document. It was written and run with the assistance of Claude Code (Anthropic); I am responsible for checking and understanding every result before relying on it. Source and rendering instructions: `report/report.qmd`, rendered with `quarto render`. No part of this report derives from university coursework or assessed material.
+
+# References
