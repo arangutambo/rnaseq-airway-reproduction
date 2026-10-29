@@ -1,0 +1,17 @@
+{
+  "paper_genes": 316,
+  "matched_in_tested_set": 304,
+  "not_tested_after_filter": 12,
+  "significant_here": 301,
+  "direction_agrees": 304,
+  "mine_total_sig": 4081,
+  "mine_sig_not_in_paper": 3780,
+  "top316_by_padj_overlap": 206,
+  "lfc1_sig_overlap": 299,
+  "lfc1_sig_total": 951,
+  "lfc15_sig_total": 406,
+  "lfc15_sig_overlap": 188,
+  "table_column_is_log2_share": 0.949,
+  "median_paper_abs_log2fc": 1.73,
+  "median_mine_sig_abs_log2fc": 0.58
+}

@@ -11,7 +11,7 @@ smooth muscle cell lines, each treated with dexamethasone or left untreated. Ori
 - All five genes the original paper highlighted (*CRISPLD2, DUSP1, KLF15, PER1, TSC22D3*) are significantly up-regulated.
 - Ignoring the pairing finds 2,773 genes, so modelling the cell line matters.
 - PC1 of the variance-stabilised data is the drug (R² 0.95); PC2/PC3 are the cell lines.
-- The paper reported 316 genes using a different pipeline. I did not reproduce that pipeline and do not claim to explain the gap; the report lists the untested candidate explanations.
+- The paper reported 316 genes (Cuffdiff). Compared with its Table S3 (`R/compare_himes.R`): 301 of the 304 testable genes are significant here, all in the same direction, so the paper's list is nearly a subset of mine; the extra genes have much smaller effects (median |log2FC| 0.58 vs 1.73). I did not run Cuffdiff, so I do not claim to know why the tool gave fewer genes.
 
 ## Reproduce
 ```r
